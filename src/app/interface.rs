@@ -1,18 +1,80 @@
-use crate::app::parser::{self};
+use std::path::Path;
+
+use crate::app::{database::Database, database_editor::DatabaseEditor, logger::Logger, parser};
+
+const DATABASE_PATH: &str = "prolog_database.bin";
 
 const MIDDLE_GAP: f32 = 20.0;
 const BOTTOM_GAP: f32 = 35.0;
 
-#[derive(Default)]
+#[derive(PartialEq)]
+enum AppTab {
+    Parser,
+    DatabaseEditor,
+}
+
 pub struct PrologApp {
     input_text: String,
     parsed_output: String,
+
+    pub database: Database,
+    pub logger: Logger,
+    
+    // UI state
+    current_tab: AppTab,
+    database_editor: DatabaseEditor,
 }
 
-
+impl Default for PrologApp {
+    fn default() -> Self {
+        let database = Database::new(Path::new(DATABASE_PATH)).unwrap();
+        let logger = Logger::new("app.log").unwrap();
+        
+        Self {
+            input_text: String::new(),
+            parsed_output: "// Parsed Prolog code will appear here...".to_string(),
+            database,
+            logger,
+            current_tab: AppTab::Parser,
+            database_editor: DatabaseEditor::new(),
+        }
+    }
+}
 
 impl eframe::App for PrologApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.current_tab, AppTab::Parser, "📝 Parser");
+                ui.selectable_value(&mut self.current_tab, AppTab::DatabaseEditor, "🗄 Database Editor");
+            });
+        });
+        
+        match self.current_tab {
+            AppTab::Parser => self.show_parser_tab(ctx),
+            AppTab::DatabaseEditor => self.database_editor.show(ctx, &mut self.database),
+        }
+    }
+}
+
+impl PrologApp {
+    pub fn with_text(text: String) -> Self {
+        let database = Database::new(Path::new(DATABASE_PATH)).unwrap();
+        let logger = Logger::new("app.log").unwrap();
+
+        let mut app = Self {
+            parsed_output: String::new(),
+            input_text: text,
+            database,
+            logger,
+            current_tab: AppTab::Parser,
+            database_editor: DatabaseEditor::new(),
+        };
+        app.update_parsed_output();
+        app
+    }
+    
+    fn show_parser_tab(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {            
             let available_height = ui.available_height();
             let panel_width = (ui.available_width() - MIDDLE_GAP) / 2.0;
@@ -75,23 +137,13 @@ impl eframe::App for PrologApp {
             });
         });
     }
-}
-
-impl PrologApp {
-    pub fn with_text(text: String) -> Self {
-        let mut app = Self {
-            input_text: text,
-            parsed_output: String::new(),
-        };
-        app.update_parsed_output();
-        app
-    }
-
+    
     fn update_parsed_output(&mut self) {
         if self.input_text.is_empty() {
             self.parsed_output = "// Parsed Prolog code will appear here...".to_string();
         } else {
-            let parse_result = parser::parse_input(&self.input_text);
+            let input = self.input_text.clone();
+            let parse_result = parser::parse_input(self, &input);
             self.parsed_output = parse_result;
         }
     }
