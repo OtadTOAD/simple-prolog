@@ -30,6 +30,19 @@ pub struct DatabaseEditor {
     cached_search: String,
     cached_results: Vec<usize>,
 
+    // Pattern pagination and editing
+    pattern_page: usize,
+    patterns_per_page: usize,
+    pattern_search: String,
+    cached_pattern_search: String,
+    cached_pattern_results: Vec<usize>,
+
+    edit_pattern_index: Option<usize>,
+    edit_pattern_name: String,
+    edit_pattern_pattern: String,
+    edit_pattern_template: String,
+    edit_pattern_priority: String,
+
     // Threading state
     operation_sender: Option<Sender<OperationResult>>,
     operation_receiver: Option<Receiver<OperationResult>>,
@@ -61,6 +74,16 @@ impl DatabaseEditor {
             new_pattern_template: String::new(),
             new_pattern_priority: String::new(),
             status_message: String::new(),
+            pattern_page: 0,
+            patterns_per_page: 10,
+            pattern_search: String::new(),
+            cached_pattern_search: String::new(),
+            cached_pattern_results: Vec::new(),
+            edit_pattern_index: None,
+            edit_pattern_name: String::new(),
+            edit_pattern_pattern: String::new(),
+            edit_pattern_template: String::new(),
+            edit_pattern_priority: String::new(),
             operation_sender: Some(sender),
             operation_receiver: Some(receiver),
             is_saving: false,
@@ -431,125 +454,324 @@ impl DatabaseEditor {
             return;
         };
 
-        ui.label(format!("Total patterns: {}", read_database.patterns.len()));
+        // Search bar
+        ui.horizontal(|ui| {
+            ui.label(format!("Total patterns: {}", read_database.patterns.len()));
+            ui.separator();
+            ui.label("Search:");
+            let search_response = ui.add(
+                egui::TextEdit::singleline(&mut self.pattern_search)
+                    .hint_text("Search patterns...")
+                    .desired_width(ui.available_width() - 20.0),
+            );
+            if search_response.changed() {
+                self.pattern_page = 0;
+                self.cached_pattern_search.clear();
+            }
+        });
 
         if read_database.patterns.is_empty() {
             ui.label("No patterns in database yet.");
             return;
         }
 
+        let search_lower = self.pattern_search.to_lowercase();
+
+        // Filter patterns
+        let filtered_indices: &[usize] = if search_lower != self.cached_pattern_search {
+            self.cached_pattern_search = search_lower.clone();
+
+            if search_lower.is_empty() {
+                self.cached_pattern_results = (0..read_database.patterns.len()).collect();
+            } else {
+                self.cached_pattern_results = read_database
+                    .patterns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pattern)| {
+                        pattern.name.to_lowercase().contains(&search_lower)
+                            || pattern.pattern.to_lowercase().contains(&search_lower)
+                            || pattern.template.to_lowercase().contains(&search_lower)
+                    })
+                    .map(|(idx, _)| idx)
+                    .collect();
+            }
+            &self.cached_pattern_results
+        } else {
+            &self.cached_pattern_results
+        };
+
+        let total_filtered = filtered_indices.len();
+        let total_pages = (total_filtered + self.patterns_per_page - 1) / self.patterns_per_page;
+
+        if self.pattern_page >= total_pages && total_pages > 0 {
+            self.pattern_page = total_pages - 1;
+        }
+
+        let start = self.pattern_page * self.patterns_per_page;
+        let end = (start + self.patterns_per_page).min(total_filtered);
+        let page_indices = &filtered_indices[start..end];
+
+        // Pagination controls
+        ui.horizontal(|ui| {
+            if total_filtered > self.patterns_per_page {
+                ui.label(format!("{}-{} of {}", start + 1, end, total_filtered));
+            } else {
+                ui.label(format!("{} matches", total_filtered));
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if total_pages > 1 {
+                    if ui.button("⏭").clicked() {
+                        self.pattern_page = total_pages - 1;
+                    }
+                    if ui.button("▶").clicked() && self.pattern_page < total_pages - 1 {
+                        self.pattern_page += 1;
+                    }
+                    ui.label(format!("{}/{}", self.pattern_page + 1, total_pages));
+                    if ui.button("◀").clicked() && self.pattern_page > 0 {
+                        self.pattern_page -= 1;
+                    }
+                    if ui.button("⏮").clicked() {
+                        self.pattern_page = 0;
+                    }
+                }
+            });
+        });
+
+        let mut to_remove = Vec::new();
+        let mut to_toggle = Vec::new();
+        let mut save_edit: Option<(usize, String, String, String, i32)> = None;
+        let mut cancel_edit = false;
+        let mut start_edit: Option<(usize, String, String, String, i32)> = None;
+
         egui::ScrollArea::vertical()
             .id_source("pattern_list_scroll")
             .max_height(300.0)
             .show(ui, |ui| {
-                let mut to_remove = Vec::new();
-                let mut to_toggle = Vec::new();
+                for (display_idx, &idx) in page_indices.iter().enumerate() {
+                    if let Some(pattern) = read_database.patterns.get(idx) {
+                        let bg_color = if display_idx % 2 == 0 {
+                            egui::Color32::from_rgb(34, 34, 34)
+                        } else {
+                            egui::Color32::from_rgb(40, 40, 40)
+                        };
 
-                for (idx, pattern) in read_database.patterns.iter().enumerate() {
-                    let bg_color = if idx % 2 == 0 {
-                        egui::Color32::from_rgb(34, 34, 34)
-                    } else {
-                        egui::Color32::from_rgb(40, 40, 40)
-                    };
+                        let is_editing = self.edit_pattern_index == Some(idx);
 
-                    egui::Frame::none()
-                        .fill(bg_color)
-                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let status = if pattern.enabled { "Y" } else { "N" };
-                                let status_color = if pattern.enabled {
-                                    egui::Color32::from_rgb(50, 200, 50)
+                        egui::Frame::none()
+                            .fill(bg_color)
+                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                            .show(ui, |ui| {
+                                if is_editing {
+                                    // Edit mode
+                                    ui.horizontal(|ui| {
+                                        ui.label("Name:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut self.edit_pattern_name)
+                                                .desired_width(ui.available_width()),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Pattern:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.edit_pattern_pattern,
+                                            )
+                                            .desired_width(ui.available_width()),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Template:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.edit_pattern_template,
+                                            )
+                                            .desired_width(ui.available_width()),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Priority:");
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut self.edit_pattern_priority,
+                                            )
+                                            .desired_width(100.0),
+                                        );
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui.button("❌ Cancel").clicked() {
+                                                    cancel_edit = true;
+                                                }
+
+                                                if ui.button("💾 Save").clicked() {
+                                                    let priority = self
+                                                        .edit_pattern_priority
+                                                        .parse()
+                                                        .unwrap_or(50);
+                                                    save_edit = Some((
+                                                        idx,
+                                                        self.edit_pattern_name.clone(),
+                                                        self.edit_pattern_pattern.clone(),
+                                                        self.edit_pattern_template.clone(),
+                                                        priority,
+                                                    ));
+                                                }
+                                            },
+                                        );
+                                    });
                                 } else {
-                                    egui::Color32::from_rgb(200, 50, 50)
-                                };
+                                    // View mode
+                                    ui.horizontal(|ui| {
+                                        let status = if pattern.enabled { "Y" } else { "N" };
+                                        let status_color = if pattern.enabled {
+                                            egui::Color32::from_rgb(50, 200, 50)
+                                        } else {
+                                            egui::Color32::from_rgb(200, 50, 50)
+                                        };
 
-                                ui.label(
-                                    egui::RichText::new(status)
-                                        .color(status_color)
-                                        .strong()
-                                        .size(14.0),
-                                );
+                                        ui.label(
+                                            egui::RichText::new(status)
+                                                .color(status_color)
+                                                .strong()
+                                                .size(14.0),
+                                        );
 
-                                ui.label(
-                                    egui::RichText::new(format!("[{}]", pattern.priority))
-                                        .color(egui::Color32::from_rgb(100, 100, 100))
-                                        .size(12.0),
-                                );
+                                        ui.label(
+                                            egui::RichText::new(format!("[{}]", pattern.priority))
+                                                .color(egui::Color32::from_rgb(100, 100, 100))
+                                                .size(12.0),
+                                        );
 
-                                ui.label(
-                                    egui::RichText::new(&pattern.name)
-                                        .strong()
-                                        .color(egui::Color32::from_rgb(138, 138, 138))
-                                        .size(13.0),
-                                );
+                                        ui.label(
+                                            egui::RichText::new(&pattern.name)
+                                                .strong()
+                                                .color(egui::Color32::from_rgb(138, 138, 138))
+                                                .size(13.0),
+                                        );
 
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.small_button("🗑").clicked() {
-                                            to_remove.push(idx);
-                                        }
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui.small_button("🗑").clicked() {
+                                                    to_remove.push(idx);
+                                                }
 
-                                        if ui
-                                            .small_button(if pattern.enabled {
-                                                "Disable"
-                                            } else {
-                                                "Enable"
-                                            })
-                                            .clicked()
-                                        {
-                                            to_toggle.push(idx);
-                                        }
-                                    },
-                                );
+                                                if ui.small_button("✏").clicked() {
+                                                    start_edit = Some((
+                                                        idx,
+                                                        pattern.name.clone(),
+                                                        pattern.pattern.clone(),
+                                                        pattern.template.clone(),
+                                                        pattern.priority,
+                                                    ));
+                                                }
+
+                                                if ui
+                                                    .small_button(if pattern.enabled {
+                                                        "Disable"
+                                                    } else {
+                                                        "Enable"
+                                                    })
+                                                    .clicked()
+                                                {
+                                                    to_toggle.push(idx);
+                                                }
+                                            },
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("  Pattern:")
+                                                .color(egui::Color32::from_rgb(100, 100, 100))
+                                                .size(11.0),
+                                        );
+                                        ui.monospace(
+                                            egui::RichText::new(&pattern.pattern)
+                                                .color(egui::Color32::from_rgb(150, 150, 150))
+                                                .size(11.0),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("  Template:")
+                                                .color(egui::Color32::from_rgb(100, 100, 100))
+                                                .size(11.0),
+                                        );
+                                        ui.monospace(
+                                            egui::RichText::new(&pattern.template)
+                                                .color(egui::Color32::from_rgb(150, 150, 150))
+                                                .size(11.0),
+                                        );
+                                    });
+                                }
                             });
 
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("  Pattern:")
-                                        .color(egui::Color32::from_rgb(100, 100, 100))
-                                        .size(11.0),
-                                );
-                                ui.monospace(
-                                    egui::RichText::new(&pattern.pattern)
-                                        .color(egui::Color32::from_rgb(150, 150, 150))
-                                        .size(11.0),
-                                );
-                            });
-
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new("  Template:")
-                                        .color(egui::Color32::from_rgb(100, 100, 100))
-                                        .size(11.0),
-                                );
-                                ui.monospace(
-                                    egui::RichText::new(&pattern.template)
-                                        .color(egui::Color32::from_rgb(150, 150, 150))
-                                        .size(11.0),
-                                );
-                            });
-                        });
-
-                    ui.add_space(2.0);
-                }
-
-                if !to_toggle.is_empty() || !to_remove.is_empty() {
-                    if let Ok(mut write_database) = database.write() {
-                        for idx in to_toggle {
-                            if let Some(pattern) = write_database.patterns.get_mut(idx) {
-                                pattern.enabled = !pattern.enabled;
-                            }
-                        }
-
-                        for idx in to_remove.iter().rev() {
-                            write_database.patterns.remove(*idx);
-                            self.status_message = "Removed pattern".to_string();
-                        }
+                        ui.add_space(2.0);
                     }
                 }
             });
+
+        // Drop the read guard before acquiring write guard
+        drop(read_database);
+
+        // Handle edit operations
+        if cancel_edit {
+            self.edit_pattern_index = None;
+            self.edit_pattern_name.clear();
+            self.edit_pattern_pattern.clear();
+            self.edit_pattern_template.clear();
+            self.edit_pattern_priority.clear();
+        }
+
+        if let Some((idx, name, pattern, template, priority)) = start_edit {
+            self.edit_pattern_index = Some(idx);
+            self.edit_pattern_name = name;
+            self.edit_pattern_pattern = pattern;
+            self.edit_pattern_template = template;
+            self.edit_pattern_priority = priority.to_string();
+        }
+
+        if let Some((idx, name, pattern, template, priority)) = save_edit {
+            if let Ok(mut write_database) = database.write() {
+                if let Some(p) = write_database.patterns.get_mut(idx) {
+                    p.name = name;
+                    p.pattern = pattern;
+                    p.template = template;
+                    p.priority = priority;
+                    self.status_message = "✅ Pattern updated".to_string();
+                }
+            }
+            self.edit_pattern_index = None;
+            self.edit_pattern_name.clear();
+            self.edit_pattern_pattern.clear();
+            self.edit_pattern_template.clear();
+            self.edit_pattern_priority.clear();
+        }
+
+        // Handle toggle and remove operations
+        if !to_toggle.is_empty() || !to_remove.is_empty() {
+            if let Ok(mut write_database) = database.write() {
+                for idx in to_toggle {
+                    if let Some(pattern) = write_database.patterns.get_mut(idx) {
+                        pattern.enabled = !pattern.enabled;
+                    }
+                }
+
+                for idx in to_remove.iter().rev() {
+                    write_database.patterns.remove(*idx);
+                    self.status_message = "Removed pattern".to_string();
+                }
+                self.cached_pattern_search.clear();
+            }
+        }
     }
 
     fn show_pattern_form(&mut self, ui: &mut egui::Ui, database: &Arc<RwLock<Database>>) {
