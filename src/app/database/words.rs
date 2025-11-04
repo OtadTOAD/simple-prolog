@@ -14,6 +14,7 @@ pub enum WordType {
     Preposition,
     Conjunction,
     Interjection,
+    Determiner,
 }
 
 impl fmt::Display for WordType {
@@ -27,6 +28,7 @@ impl fmt::Display for WordType {
             WordType::Preposition => write!(f, "Preposition"),
             WordType::Conjunction => write!(f, "Conjunction"),
             WordType::Interjection => write!(f, "Interjection"),
+            WordType::Determiner => write!(f, "Determiner"),
         }
     }
 }
@@ -39,14 +41,7 @@ pub struct WordEntry {
 }
 
 impl Database {
-    pub fn get_word_type(&self, word: &str) -> Option<WordType> {
-        let key = self.form_index.get(word)?;
-        self.form_value
-            .get(key)
-            .map(|entry| entry.word_type.clone())
-    }
-
-    pub fn get_word_entry(&self, word: &str) -> Option<&WordEntry> {
+    pub fn get_word_entries(&self, word: &str) -> Option<&Vec<WordEntry>> {
         let key = self.form_index.get(word)?;
         self.form_value.get(key)
     }

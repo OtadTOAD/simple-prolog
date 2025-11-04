@@ -19,7 +19,9 @@
 
 */
 
-use crate::app::PrologApp;
+use crate::app::{PrologApp, logger::LogLevel};
+
+use super::pattern_matcher::{apply_template, parse_pattern, try_match_pattern};
 
 // Method for parsing input text chunk into sentences.
 // This method assumes that input text will strictly follow grammatical rules.
@@ -75,30 +77,46 @@ pub fn parse_sentences(input: &String) -> Vec<String> {
     sentences
 }
 
-pub fn normalize_sentence(app: &mut PrologApp, sentence: &String) -> String {
-    let words: Vec<&str> = sentence.split(" ").collect();
-    let mut normalized = Vec::new();
+pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
+    let words: Vec<String> = sentence
+        .trim_end_matches('.')
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+    if words.is_empty() {
+        return String::new();
+    }
 
-    for w in words {
-        let word_type = app.database.get_word_type(w);
-        if let Some(word_type) = word_type {
-            normalized.push(word_type.to_string());
-        } else {
-            app.logger.log_unknown_word(w, sentence).unwrap_or(());
-            normalized.push(("unknown").to_string());
+    let Ok(read_database) = app.database.read() else {
+        return "// ERROR: Unable to read database\n".to_string();
+    };
+
+    let sorted_patterns = read_database.get_sorted_patterns();
+    for pattern in sorted_patterns {
+        let pattern_tokens = parse_pattern(&pattern.pattern);
+
+        if try_match_pattern(&words, &pattern_tokens, app) {
+            let prolog_output = apply_template(&words, &pattern.template);
+            return format!(
+                "// FROM: {}\n// PATTERN: {}\n{}\n",
+                sentence, pattern.name, prolog_output
+            );
         }
     }
 
-    normalized.join(" ")
-}
-
-pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
-    let normalized_sentence = normalize_sentence(app, sentence);
+    app.logger
+        .log(
+            LogLevel::Warning,
+            "UNPARSED_SENTENCE",
+            "No pattern matched for sentence",
+            Some(sentence),
+        )
+        .ok();
 
     format!(
-        "// FROM: {}\nprolog_fact('{}')\n",
-        normalized_sentence,
-        normalized_sentence.replace("'", "\\'")
+        "// FROM: {}\n// WARNING: No pattern matched\nprolog_fact('{}')\n",
+        sentence,
+        sentence.replace("'", "\\'")
     )
 }
 

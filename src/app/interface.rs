@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::{Arc, RwLock}};
 
 use crate::app::{database::Database, database_editor::DatabaseEditor, logger::Logger, parser};
 
@@ -17,10 +17,9 @@ pub struct PrologApp {
     input_text: String,
     parsed_output: String,
 
-    pub database: Database,
+    pub database: Arc<RwLock<Database>>,
     pub logger: Logger,
     
-    // UI state
     current_tab: AppTab,
     database_editor: DatabaseEditor,
 }
@@ -33,7 +32,7 @@ impl Default for PrologApp {
         Self {
             input_text: String::new(),
             parsed_output: "// Parsed Prolog code will appear here...".to_string(),
-            database,
+            database: Arc::new(RwLock::new(database)),
             logger,
             current_tab: AppTab::Parser,
             database_editor: DatabaseEditor::new(),
@@ -52,7 +51,7 @@ impl eframe::App for PrologApp {
         
         match self.current_tab {
             AppTab::Parser => self.show_parser_tab(ctx),
-            AppTab::DatabaseEditor => self.database_editor.show(ctx, &mut self.database),
+            AppTab::DatabaseEditor => self.database_editor.show(ctx, &self.database.clone()),
         }
     }
 }
@@ -65,7 +64,7 @@ impl PrologApp {
         let mut app = Self {
             parsed_output: String::new(),
             input_text: text,
-            database,
+            database: Arc::new(RwLock::new(database)),
             logger,
             current_tab: AppTab::Parser,
             database_editor: DatabaseEditor::new(),

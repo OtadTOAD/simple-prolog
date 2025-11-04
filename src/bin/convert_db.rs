@@ -11,14 +11,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let json_path = "prolog_database.json";
     let bin_path = "prolog_database.bin";
 
-    // Check if JSON exists
     if !Path::new(json_path).exists() {
         eprintln!("Error: {} not found!", json_path);
         eprintln!("Make sure you're running this from the project root directory.");
         return Ok(());
     }
 
-    // Load from JSON
     println!("Loading JSON database from {}...", json_path);
     let start = std::time::Instant::now();
     let db = Database::new(Path::new(json_path))?;
@@ -28,7 +26,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Words: {}", db.words.len());
     println!("  - Patterns: {}", db.patterns.len());
 
-    // Save as binary
     println!("\nSaving as binary to {}...", bin_path);
     let start = std::time::Instant::now();
     db.save(bin_path)?;
@@ -36,7 +33,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✓ Saved in {:.2}s", save_time.as_secs_f64());
 
-    // Compare file sizes
     let json_size = std::fs::metadata(json_path)?.len();
     let bin_size = std::fs::metadata(bin_path)?.len();
 
@@ -48,7 +44,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (1.0 - bin_size as f64 / json_size as f64) * 100.0
     );
 
-    // Test load speed
     println!("\n=== Speed Test ===");
     let start = std::time::Instant::now();
     let _test_db = Database::new(Path::new(bin_path))?;
