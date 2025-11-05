@@ -30,7 +30,6 @@ pub struct DatabaseEditor {
     cached_search: String,
     cached_results: Vec<usize>,
 
-    // Pattern pagination and editing
     pattern_page: usize,
     patterns_per_page: usize,
     pattern_search: String,
@@ -43,7 +42,6 @@ pub struct DatabaseEditor {
     edit_pattern_template: String,
     edit_pattern_priority: String,
 
-    // Threading state
     operation_sender: Option<Sender<OperationResult>>,
     operation_receiver: Option<Receiver<OperationResult>>,
     is_saving: bool,
@@ -64,7 +62,7 @@ impl DatabaseEditor {
             word_search: String::new(),
             word_page: 0,
             words_per_page: 50,
-            cached_search: String::new(),
+            cached_search: String::from("\x00__UNINITIALIZED__"),
             cached_results: Vec::new(),
             new_word_lemma: String::new(),
             new_word_type: WordType::Noun,
@@ -77,7 +75,7 @@ impl DatabaseEditor {
             pattern_page: 0,
             patterns_per_page: 10,
             pattern_search: String::new(),
-            cached_pattern_search: String::new(),
+            cached_pattern_search: String::from("\x00__UNINITIALIZED__"),
             cached_pattern_results: Vec::new(),
             edit_pattern_index: None,
             edit_pattern_name: String::new(),
