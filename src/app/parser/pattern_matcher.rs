@@ -107,23 +107,8 @@ pub fn try_match_pattern(
         captures: &mut Vec<String>,
         app: &PrologApp,
     ) -> bool {
-        println!(
-            "  backtrack: word_idx={}, pattern_idx={}, word={:?}, pattern={:?}",
-            word_idx,
-            pattern_idx,
-            words.get(word_idx),
-            pattern_tokens.get(pattern_idx)
-        );
-
         if pattern_idx >= pattern_tokens.len() {
-            let result = word_idx == words.len();
-            println!(
-                "  -> End of pattern. word_idx={}, words.len()={}, result={}",
-                word_idx,
-                words.len(),
-                result
-            );
-            return result;
+            return word_idx == words.len();
         }
 
         if word_idx >= words.len() {
@@ -170,28 +155,18 @@ pub fn try_match_pattern(
                 app,
             ),
             PatternToken::Greedy(inner) => {
-                let mut matched_words = Vec::new();
                 let mut end_idx = word_idx;
 
                 while end_idx < words.len() && matches_token(&words[end_idx], inner, app) {
-                    matched_words.push(words[end_idx].clone());
                     end_idx += 1;
                 }
 
-                if matched_words.is_empty() {
-                    println!("  -> Greedy FAILED: no matches");
+                if end_idx == word_idx {
                     return false;
                 }
 
                 for try_end in (word_idx + 1..=end_idx).rev() {
-                    let capture_count = try_end - word_idx;
                     let greedy_words: Vec<String> = words[word_idx..try_end].to_vec();
-
-                    println!(
-                        "  -> Greedy trying {} words: {:?}",
-                        capture_count, greedy_words
-                    );
-
                     let formatted_capture = greedy_words.join(" ").to_lowercase().replace(' ', "_");
 
                     captures.push(formatted_capture);
@@ -214,10 +189,6 @@ pub fn try_match_pattern(
             }
             token => {
                 if matches_token(&words[word_idx], token, app) {
-                    println!(
-                        "  -> Token MATCHED: word='{}', token={:?}",
-                        words[word_idx], token
-                    );
                     if matches!(token, PatternToken::TypeMatch(_)) {
                         captures.push(words[word_idx].clone());
                     }
@@ -230,10 +201,6 @@ pub fn try_match_pattern(
                         app,
                     )
                 } else {
-                    println!(
-                        "  -> Token FAILED: word='{}', token={:?}",
-                        words[word_idx], token
-                    );
                     false
                 }
             }
@@ -254,9 +221,7 @@ pub fn try_match_pattern_substring(
     app: &PrologApp,
 ) -> Option<(Vec<String>, usize)> {
     for start_idx in 0..words.len() {
-        println!("  Trying substring match starting at index {}", start_idx);
         if let Some(captures) = try_match_pattern(&words[start_idx..], pattern_tokens, app) {
-            println!("  -> Substring match found at index {}", start_idx);
             return Some((captures, start_idx));
         }
     }

@@ -1,7 +1,7 @@
 pub mod database;
 mod database_editor;
+mod interactive_parser;
 mod interface;
-mod logger;
 pub mod parser;
 
 pub use interface::PrologApp;

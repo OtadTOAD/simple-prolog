@@ -1,3 +1,4 @@
+pub mod interactive_converter;
 pub mod parser;
 pub mod pattern_matcher;
 

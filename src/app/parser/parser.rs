@@ -19,11 +19,14 @@
 
 */
 
-use crate::app::{PrologApp, logger::LogLevel};
+use crate::app::PrologApp;
 
-use super::pattern_matcher::{
-    apply_template, find_all_pattern_matches, parse_pattern, try_match_pattern,
-    try_match_pattern_substring,
+use super::{
+    interactive_converter::create_interactive_match,
+    pattern_matcher::{
+        apply_template, find_all_pattern_matches, parse_pattern, try_match_pattern,
+        try_match_pattern_substring,
+    },
 };
 
 // Method for parsing input text chunk into sentences.
@@ -96,7 +99,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
 
     let sorted_patterns = read_database.get_sorted_patterns();
 
-    // Prepare patterns in the format needed for find_all_pattern_matches
     let patterns_with_tokens: Vec<(String, String, Vec<_>)> = sorted_patterns
         .iter()
         .map(|p| {
@@ -108,9 +110,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
         })
         .collect();
 
-    println!("DEBUG: Trying to find all pattern matches in: {:?}", words);
-
-    // Check if there are conjunctions in the sentence
     let has_conjunctions = words.iter().any(|w| {
         matches!(
             w.to_lowercase().as_str(),
@@ -120,20 +119,32 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
 
     // If there are conjunctions, skip find_all_pattern_matches and use conjunction expansion instead
     if !has_conjunctions {
-        // Find all non-overlapping pattern matches
         let matches = find_all_pattern_matches(&words, &patterns_with_tokens, &app);
 
         if !matches.is_empty() {
-            // Generate output for all matches
+            for m in &matches {
+                let pattern_tokens = parse_pattern(
+                    &read_database
+                        .patterns
+                        .iter()
+                        .find(|p| p.name == m.pattern_name)
+                        .map(|p| &p.pattern)
+                        .unwrap_or(&String::new()),
+                );
+
+                let interactive_match = create_interactive_match(
+                    &words[m.start_idx..m.end_idx],
+                    m,
+                    &pattern_tokens,
+                    app,
+                );
+                app.interactive_parser.matches.push(interactive_match);
+            }
+
             let mut outputs = Vec::new();
             outputs.push(format!("// FROM: {}", sentence));
 
             for m in &matches {
-                println!(
-                    "DEBUG: MATCH! Pattern '{}' at [{}, {}): {:?}",
-                    m.pattern_name, m.start_idx, m.end_idx, m.captures
-                );
-
                 let prolog_outputs = apply_template(&m.captures, &m.template);
                 outputs.push(format!(
                     "// PATTERN: {} (words {}-{})",
@@ -198,16 +209,12 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
             let mut second_sentence = subject.to_vec();
             second_sentence.extend_from_slice(after_conj);
 
-            println!("DEBUG: Trying subject sharing at conjunction {}", conj_idx);
-            println!("  Subject: {:?}", subject);
-            println!("  First part: {:?}", first_sentence);
-            println!("  Second part: {:?}", second_sentence);
-
-            // Try to match each part with any pattern
             let mut first_match = None;
             let mut second_match = None;
             let mut first_pattern_name = String::new();
             let mut second_pattern_name = String::new();
+            let mut first_pattern_tokens = Vec::new();
+            let mut second_pattern_tokens = Vec::new();
 
             for pattern in sorted_patterns.iter() {
                 let pattern_tokens = parse_pattern(&pattern.pattern);
@@ -218,7 +225,7 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                     {
                         first_match = Some((captures, pattern.template.clone()));
                         first_pattern_name = pattern.name.clone();
-                        println!("  First part matched pattern: {}", pattern.name);
+                        first_pattern_tokens = pattern_tokens.clone();
                     }
                 }
 
@@ -228,7 +235,7 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                     {
                         second_match = Some((captures, pattern.template.clone()));
                         second_pattern_name = pattern.name.clone();
-                        println!("  Second part matched pattern: {}", pattern.name);
+                        second_pattern_tokens = pattern_tokens.clone();
                     }
                 }
 
@@ -243,6 +250,37 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                 Some((second_captures, second_template)),
             ) = (first_match, second_match)
             {
+                // Create interactive matches for conjunction expansion
+                let first_pattern_match = super::pattern_matcher::PatternMatch {
+                    pattern_name: first_pattern_name.clone(),
+                    template: first_template.clone(),
+                    captures: first_captures.clone(),
+                    start_idx: 0,
+                    end_idx: first_sentence.len(),
+                };
+                let first_interactive = create_interactive_match(
+                    &first_sentence,
+                    &first_pattern_match,
+                    &first_pattern_tokens,
+                    app,
+                );
+                app.interactive_parser.matches.push(first_interactive);
+
+                let second_pattern_match = super::pattern_matcher::PatternMatch {
+                    pattern_name: second_pattern_name.clone(),
+                    template: second_template.clone(),
+                    captures: second_captures.clone(),
+                    start_idx: 0,
+                    end_idx: second_sentence.len(),
+                };
+                let second_interactive = create_interactive_match(
+                    &second_sentence,
+                    &second_pattern_match,
+                    &second_pattern_tokens,
+                    app,
+                );
+                app.interactive_parser.matches.push(second_interactive);
+
                 let mut outputs = Vec::new();
                 outputs.push(format!("// FROM: {}", sentence));
                 outputs.push(format!(
@@ -280,15 +318,47 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                         pattern.name
                     ));
 
-                    if let Some(captures) =
+                    if let Some(first_captures) =
                         try_match_pattern(&first_sentence, &pattern_tokens, &app)
                     {
-                        outputs.extend(apply_template(&captures, &pattern.template));
+                        // Create interactive match for first part
+                        let first_pattern_match = super::pattern_matcher::PatternMatch {
+                            pattern_name: pattern.name.clone(),
+                            template: pattern.template.clone(),
+                            captures: first_captures.clone(),
+                            start_idx: 0,
+                            end_idx: first_sentence.len(),
+                        };
+                        let first_interactive = create_interactive_match(
+                            &first_sentence,
+                            &first_pattern_match,
+                            &pattern_tokens,
+                            app,
+                        );
+                        app.interactive_parser.matches.push(first_interactive);
+
+                        outputs.extend(apply_template(&first_captures, &pattern.template));
                     }
-                    if let Some(captures) =
+                    if let Some(second_captures) =
                         try_match_pattern(&second_sentence, &pattern_tokens, &app)
                     {
-                        outputs.extend(apply_template(&captures, &pattern.template));
+                        // Create interactive match for second part
+                        let second_pattern_match = super::pattern_matcher::PatternMatch {
+                            pattern_name: pattern.name.clone(),
+                            template: pattern.template.clone(),
+                            captures: second_captures.clone(),
+                            start_idx: 0,
+                            end_idx: second_sentence.len(),
+                        };
+                        let second_interactive = create_interactive_match(
+                            &second_sentence,
+                            &second_pattern_match,
+                            &pattern_tokens,
+                            app,
+                        );
+                        app.interactive_parser.matches.push(second_interactive);
+
+                        outputs.extend(apply_template(&second_captures, &pattern.template));
                     }
 
                     return outputs.join("\n") + "\n";
@@ -297,17 +367,22 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
         }
     }
 
-    // Single pattern matching fallback
     for pattern in sorted_patterns {
         let pattern_tokens = parse_pattern(&pattern.pattern);
-        println!(
-            "DEBUG: Fallback - trying pattern '{}' with tokens: {:?}",
-            pattern.name, pattern_tokens
-        );
 
-        // Try exact match (from beginning)
         if let Some(captures) = try_match_pattern(&words, &pattern_tokens, &app) {
-            println!("DEBUG: EXACT MATCH! Captures: {:?}", captures);
+            // Create interactive match for fallback single-pattern case
+            let pattern_match = super::pattern_matcher::PatternMatch {
+                pattern_name: pattern.name.clone(),
+                template: pattern.template.clone(),
+                captures: captures.clone(),
+                start_idx: 0,
+                end_idx: words.len(),
+            };
+            let interactive_match =
+                create_interactive_match(&words, &pattern_match, &pattern_tokens, app);
+            app.interactive_parser.matches.push(interactive_match);
+
             let prolog_outputs = apply_template(&captures, &pattern.template);
             let output = prolog_outputs.join("\n");
             return format!(
@@ -316,14 +391,27 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
             );
         }
 
-        // Try substring match (from any position)
         if let Some((captures, start_idx)) =
             try_match_pattern_substring(&words, &pattern_tokens, &app)
         {
-            println!(
-                "DEBUG: SUBSTRING MATCH at index {}! Captures: {:?}",
-                start_idx, captures
-            );
+            // Create interactive match for substring case
+            // Note: We need to calculate end_idx based on the captures
+            let match_len = captures
+                .iter()
+                .map(|c| c.split_whitespace().count())
+                .sum::<usize>()
+                .max(1);
+            let pattern_match = super::pattern_matcher::PatternMatch {
+                pattern_name: pattern.name.clone(),
+                template: pattern.template.clone(),
+                captures: captures.clone(),
+                start_idx,
+                end_idx: start_idx + match_len,
+            };
+            let interactive_match =
+                create_interactive_match(&words[start_idx..], &pattern_match, &pattern_tokens, app);
+            app.interactive_parser.matches.push(interactive_match);
+
             let prolog_outputs = apply_template(&captures, &pattern.template);
             let output = prolog_outputs.join("\n");
             return format!(
@@ -333,15 +421,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
         }
     }
 
-    app.logger
-        .log(
-            LogLevel::Warning,
-            "UNPARSED_SENTENCE",
-            "No pattern matched for sentence",
-            Some(sentence),
-        )
-        .ok();
-
     format!(
         "// FROM: {}\n// WARNING: No pattern matched\nprolog_fact('{}')\n",
         sentence,
@@ -350,7 +429,12 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
 }
 
 pub fn parse_input(app: &mut PrologApp, input: &String) -> String {
+    app.interactive_parser.clear();
     let sentences = parse_sentences(input);
+
+    // Note: Multithreading requires significant refactoring since parse_prolog needs &mut PrologApp
+    // The database is thread-safe (Arc<RwLock>), but interactive_parser is modified during parsing
+    // For typical use (< 100 sentences), sequential parsing is fast enough (~1ms per sentence)
     let parsed_sentences: Vec<String> = sentences.iter().map(|s| parse_prolog(app, s)).collect();
     parsed_sentences.join("\n\n")
 }

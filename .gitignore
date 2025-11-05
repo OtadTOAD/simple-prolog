@@ -1,5 +1,5 @@
 /target
 /prolog_database.json
 /scripts/eng.tsv
-/prolog_database.bin
-/prolog_database.json
+prolog_database.bin
+prolog_database.json

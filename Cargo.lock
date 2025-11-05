@@ -3281,6 +3281,7 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "rayon",
  "regex",
  "serde",
  "serde_json",
