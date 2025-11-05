@@ -1,6 +1,6 @@
 use std::{path::Path, sync::{Arc, RwLock}};
 
-use crate::app::{database::Database, database_editor::DatabaseEditor, parser, interactive_parser::InteractiveParser};
+use crate::app::{database::Database, database_editor::DatabaseEditor, parser, interactive_parser::InteractiveParser, query_engine::QueryEngine};
 
 const DATABASE_PATH: &str = "prolog_database.bin";
 const BOTTOM_GAP: f32 = 35.0;
@@ -19,6 +19,7 @@ pub struct PrologApp {
 
     pub database: Arc<RwLock<Database>>,
     pub interactive_parser: InteractiveParser,
+    pub query_engine: QueryEngine,
     
     current_tab: AppTab,
     database_editor: DatabaseEditor,
@@ -27,6 +28,13 @@ pub struct PrologApp {
 impl Default for PrologApp {
     fn default() -> Self {
         let database = Database::new(Path::new(DATABASE_PATH)).unwrap();
+        let mut query_engine = QueryEngine::new();
+        
+        // Try to load query config file
+        if let Err(e) = query_engine.load_config_file("query_config.txt") {
+            eprintln!("Note: Could not load query_config.txt: {}", e);
+            eprintln!("You can create this file to define custom rules and patterns.");
+        }
         
         Self {
             input_text: String::new(),
@@ -37,6 +45,7 @@ impl Default for PrologApp {
             current_tab: AppTab::Parser,
             database_editor: DatabaseEditor::new(),
             interactive_parser: InteractiveParser::new(),
+            query_engine,
         }
     }
 }
@@ -60,6 +69,12 @@ impl eframe::App for PrologApp {
 impl PrologApp {
     pub fn with_text(text: String) -> Self {
         let database = Database::new(Path::new(DATABASE_PATH)).unwrap();
+        let mut query_engine = QueryEngine::new();
+        
+        // Try to load query config file
+        if let Err(e) = query_engine.load_config_file("query_config.txt") {
+            eprintln!("Note: Could not load query_config.txt: {}", e);
+        }
 
         let mut app = Self {
             parsed_output: String::new(),
@@ -70,6 +85,7 @@ impl PrologApp {
             current_tab: AppTab::Parser,
             database_editor: DatabaseEditor::new(),
             interactive_parser: InteractiveParser::new(),
+            query_engine,
         };
         app.update_parsed_output();
         app
@@ -402,10 +418,20 @@ impl PrologApp {
         if self.input_text.is_empty() {
             self.parsed_output = "// Parsed Prolog code will appear here...".to_string();
             self.interactive_parser.clear();
+            
+            // Reset query engine but reload config
+            let mut new_engine = QueryEngine::new();
+            if let Err(e) = new_engine.load_config_file("query_config.txt") {
+                eprintln!("Note: Could not load query_config.txt: {}", e);
+            }
+            self.query_engine = new_engine;
         } else {
             let input = self.input_text.clone();
             let parse_result = parser::parse_input(self, &input);
             self.parsed_output = parse_result;
+            
+            // Load facts into query engine (preserves existing rules/patterns)
+            self.query_engine.load_facts_from_output(&self.parsed_output);
         }
     }
     
@@ -415,6 +441,10 @@ impl PrologApp {
             return;
         }
         
+        // Create a fresh query engine with facts from parsed output
+        let mut query_engine = QueryEngine::new();
+        
+        // Load facts from parsed output if available
         let has_fact_lines = self
             .parsed_output
             .lines()
@@ -423,103 +453,84 @@ impl PrologApp {
                 !t.is_empty() && !t.starts_with("//")
             });
 
-        if !has_fact_lines {
-            self.query_results = "// No parsed facts available. Parse some input text first.".to_string();
-            return;
+        if has_fact_lines {
+            query_engine.load_facts_from_output(&self.parsed_output);
         }
         
-        let query = self.query_text.trim();
-        let query_result = self.match_query(query);
-        
-        match query_result {
-            Ok(results) => {
-                if results.is_empty() {
-                    self.query_results = format!("// No results found for query:\n// {}", query);
-                } else {
-                    self.query_results = results.join("\n");
-                }
-            }
-            Err(err) => {
-                self.query_results = format!("// Error: {}", err);
-            }
-        }
-    }
-    
-    fn match_query(&self, query: &str) -> Result<Vec<String>, String> {
-        let query = query.trim_end_matches('.').trim();
-        
-        let open_paren = query.find('(').ok_or("Invalid query format. Expected: predicate(args).")?;
-        let close_paren = query.rfind(')').ok_or("Invalid query format. Missing closing parenthesis.")?;
-        
-        let predicate = query[..open_paren].trim();
-        let args_str = query[open_paren + 1..close_paren].trim();
-        
-        let query_args: Vec<&str> = if args_str.is_empty() {
-            vec![]
-        } else {
-            args_str.split(',').map(|s| s.trim()).collect()
-        };
-        
+        // Parse the query text: can contain facts, rules, patterns, and queries
         let mut results = Vec::new();
-        let mut bindings_set = std::collections::HashSet::new();
+        let mut errors = Vec::new();
         
-        for line in self.parsed_output.lines() {
+        for line in self.query_text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with("//") {
+            
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with("//") || line.starts_with("#") {
                 continue;
             }
             
-            if let Some(fact_open) = line.find('(') {
-                if let Some(fact_close) = line.rfind(')') {
-                    let fact_pred = line[..fact_open].trim();
-                    let fact_args_str = line[fact_open + 1..fact_close].trim();
-                    
-                    if fact_pred == predicate {
-                        let fact_args: Vec<&str> = if fact_args_str.is_empty() {
-                            vec![]
+            // Check what type of statement this is
+            if line.contains(":-") {
+                // It's a rule definition
+                match query_engine.add_rule(line) {
+                    Ok(_) => {
+                        results.push(format!("// Rule added: {}", line));
+                    }
+                    Err(e) => {
+                        errors.push(format!("// Error adding rule: {}", e));
+                    }
+                }
+            } else if line.contains("-->") {
+                // It's a pattern definition
+                match query_engine.add_pattern(line) {
+                    Ok(_) => {
+                        results.push(format!("// Pattern added: {}", line));
+                    }
+                    Err(e) => {
+                        errors.push(format!("// Error adding pattern: {}", e));
+                    }
+                }
+            } else if line.ends_with('.') && !line.contains('?') {
+                // It's a fact definition (ends with period, not a query)
+                // Try to parse and add as a fact
+                if let Some(fact) = query_engine.parse_fact_public(line) {
+                    query_engine.add_fact(fact);
+                    results.push(format!("// Fact added: {}", line));
+                } else {
+                    errors.push(format!("// Error parsing fact: {}", line));
+                }
+            } else {
+                // It's a query - execute it
+                match query_engine.query(line) {
+                    Ok(query_results) => {
+                        if query_results.is_empty() {
+                            results.push(format!("// Query: {}", line));
+                            results.push("// No results found.".to_string());
                         } else {
-                            fact_args_str.split(',').map(|s| s.trim()).collect()
-                        };
-                        
-                        if query_args.len() == fact_args.len() {
-                            if let Some(binding) = self.try_match_args(&query_args, &fact_args) {
-                                let binding_key = format!("{:?}", binding);
-                                if !bindings_set.contains(&binding_key) {
-                                    bindings_set.insert(binding_key);
-                                    
-                                    if binding.is_empty() {
-                                        results.push(format!("true."));
-                                    } else {
-                                        let mut binding_strs: Vec<String> = binding.iter()
-                                            .map(|(var, val)| format!("{} = {}", var, val))
-                                            .collect();
-                                        binding_strs.sort();
-                                        results.push(binding_strs.join(", "));
-                                    }
-                                }
-                            }
+                            results.push(format!("// Query: {}", line));
+                            results.extend(query_results);
                         }
+                    }
+                    Err(err) => {
+                        errors.push(format!("// Error in query '{}': {}", line, err));
                     }
                 }
             }
         }
         
-        Ok(results)
-    }
-    
-    fn try_match_args(&self, query_args: &[&str], fact_args: &[&str]) -> Option<Vec<(String, String)>> {
-        let mut bindings = Vec::new();
-        
-        for (q_arg, f_arg) in query_args.iter().zip(fact_args.iter()) {
-            if q_arg.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                bindings.push((q_arg.to_string(), f_arg.to_string()));
-            } else {
-                if q_arg != f_arg {
-                    return None;
-                }
-            }
+        // Combine errors and results
+        let mut output = Vec::new();
+        let has_errors = !errors.is_empty();
+        if has_errors {
+            output.extend(errors);
+            output.push("".to_string());
+        }
+        if !results.is_empty() {
+            output.extend(results);
+        } else if !has_errors {
+            output.push("// No queries or statements found.".to_string());
         }
         
-        Some(bindings)
+        self.query_results = output.join("\n");
     }
 }

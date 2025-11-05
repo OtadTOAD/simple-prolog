@@ -1,0 +1,14 @@
+Bear is an animal.
+Deer is an animal.
+Owl is an animal.
+Cat is a mammal.
+Dog is a mammal.
+
+Chase is an action.
+Run is an action.
+Fight is an action.
+Sleep is an action.
+
+Big describes bear.
+Fast describes deer.
+Wise describes owl.
