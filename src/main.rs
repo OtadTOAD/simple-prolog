@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 mod app;
 
 use eframe::egui;
@@ -9,7 +11,7 @@ fn main() -> Result<(), eframe::Error> {
     let icon_data = load_icon();
 
     let mut viewport_builder = egui::ViewportBuilder::default()
-        .with_inner_size([1200.0, 800.0])
+        .with_inner_size([1200.0, 900.0])
         .with_title("Daviti's Prolog Parser");
 
     if let Some(icon) = icon_data {

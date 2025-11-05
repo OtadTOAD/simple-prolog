@@ -117,7 +117,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
         )
     });
 
-    // If there are conjunctions, skip find_all_pattern_matches and use conjunction expansion instead
     if !has_conjunctions {
         let matches = find_all_pattern_matches(&words, &patterns_with_tokens, &app);
 
@@ -157,10 +156,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
         }
     }
 
-    // If no matches found, try the old single-pattern approach as fallback
-    // But first, try conjunction expansion with ALL patterns
-
-    // Try conjunction expansion across all patterns
     for &conj_idx in words
         .iter()
         .enumerate()
@@ -181,7 +176,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
             continue;
         }
 
-        // Find the subject (first noun)
         let mut subject_end_idx = 0;
         for (i, word) in words.iter().enumerate() {
             if let Ok(read_database) = app.database.read() {
@@ -194,15 +188,12 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                         break;
                     }
                 } else {
-                    // Unknown word, assume it's a proper noun
                     subject_end_idx = i + 1;
                     break;
                 }
             }
         }
 
-        // Try subject sharing: "Plato wrote books and put words..."
-        // -> "Plato wrote books" + "Plato put words..."
         if subject_end_idx > 0 && subject_end_idx <= conj_idx {
             let subject = &words[..subject_end_idx];
             let first_sentence = before_conj.to_vec();
@@ -244,13 +235,11 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                 }
             }
 
-            // If both parts matched, generate output
             if let (
                 Some((first_captures, first_template)),
                 Some((second_captures, second_template)),
             ) = (first_match, second_match)
             {
-                // Create interactive matches for conjunction expansion
                 let first_pattern_match = super::pattern_matcher::PatternMatch {
                     pattern_name: first_pattern_name.clone(),
                     template: first_template.clone(),
@@ -294,7 +283,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
             }
         }
 
-        // Try simple conjunction split (e.g., "dog is black and white")
         for split_point in (0..=before_conj.len()).rev() {
             let shared_prefix = &before_conj[..split_point];
             let first_part_suffix = &before_conj[split_point..];
@@ -321,7 +309,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                     if let Some(first_captures) =
                         try_match_pattern(&first_sentence, &pattern_tokens, &app)
                     {
-                        // Create interactive match for first part
                         let first_pattern_match = super::pattern_matcher::PatternMatch {
                             pattern_name: pattern.name.clone(),
                             template: pattern.template.clone(),
@@ -342,7 +329,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
                     if let Some(second_captures) =
                         try_match_pattern(&second_sentence, &pattern_tokens, &app)
                     {
-                        // Create interactive match for second part
                         let second_pattern_match = super::pattern_matcher::PatternMatch {
                             pattern_name: pattern.name.clone(),
                             template: pattern.template.clone(),
@@ -371,7 +357,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
         let pattern_tokens = parse_pattern(&pattern.pattern);
 
         if let Some(captures) = try_match_pattern(&words, &pattern_tokens, &app) {
-            // Create interactive match for fallback single-pattern case
             let pattern_match = super::pattern_matcher::PatternMatch {
                 pattern_name: pattern.name.clone(),
                 template: pattern.template.clone(),
@@ -394,8 +379,6 @@ pub fn parse_prolog(app: &mut PrologApp, sentence: &String) -> String {
         if let Some((captures, start_idx)) =
             try_match_pattern_substring(&words, &pattern_tokens, &app)
         {
-            // Create interactive match for substring case
-            // Note: We need to calculate end_idx based on the captures
             let match_len = captures
                 .iter()
                 .map(|c| c.split_whitespace().count())
@@ -432,9 +415,6 @@ pub fn parse_input(app: &mut PrologApp, input: &String) -> String {
     app.interactive_parser.clear();
     let sentences = parse_sentences(input);
 
-    // Note: Multithreading requires significant refactoring since parse_prolog needs &mut PrologApp
-    // The database is thread-safe (Arc<RwLock>), but interactive_parser is modified during parsing
-    // For typical use (< 100 sentences), sequential parsing is fast enough (~1ms per sentence)
     let parsed_sentences: Vec<String> = sentences.iter().map(|s| parse_prolog(app, s)).collect();
     parsed_sentences.join("\n\n")
 }

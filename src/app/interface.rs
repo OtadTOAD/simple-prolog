@@ -85,7 +85,6 @@ impl PrologApp {
             let panel_width = usable_width / 3.0 - 3.0;
             
             ui.horizontal(|ui| {
-                // Left panel: Input Text
                 ui.allocate_ui_with_layout(
                     egui::vec2(panel_width, available_height),
                     egui::Layout::top_down(egui::Align::Min),
@@ -210,7 +209,6 @@ impl PrologApp {
                 
                 ui.separator();
                 
-                // Middle panel: Interactive Parsing
                 ui.allocate_ui_with_layout(
                     egui::vec2(panel_width, available_height),
                     egui::Layout::top_down(egui::Align::Min),
@@ -237,7 +235,6 @@ impl PrologApp {
                 
                 ui.separator();
                 
-                // Right panel: Query Executor
                 ui.allocate_ui_with_layout(
                     egui::vec2(panel_width, available_height),
                     egui::Layout::top_down(egui::Align::Min),
@@ -418,7 +415,6 @@ impl PrologApp {
             return;
         }
         
-        // Check whether there are any non-comment, non-empty lines (facts) in parsed_output.
         let has_fact_lines = self
             .parsed_output
             .lines()
@@ -432,7 +428,6 @@ impl PrologApp {
             return;
         }
         
-        // Parse the query
         let query = self.query_text.trim();
         let query_result = self.match_query(query);
         
@@ -451,24 +446,20 @@ impl PrologApp {
     }
     
     fn match_query(&self, query: &str) -> Result<Vec<String>, String> {
-        // Remove trailing period if present
         let query = query.trim_end_matches('.').trim();
         
-        // Parse query structure: predicate(arg1, arg2, ...)
         let open_paren = query.find('(').ok_or("Invalid query format. Expected: predicate(args).")?;
         let close_paren = query.rfind(')').ok_or("Invalid query format. Missing closing parenthesis.")?;
         
         let predicate = query[..open_paren].trim();
         let args_str = query[open_paren + 1..close_paren].trim();
         
-        // Split arguments
         let query_args: Vec<&str> = if args_str.is_empty() {
             vec![]
         } else {
             args_str.split(',').map(|s| s.trim()).collect()
         };
         
-        // Parse facts from parsed_output
         let mut results = Vec::new();
         let mut bindings_set = std::collections::HashSet::new();
         
@@ -478,13 +469,11 @@ impl PrologApp {
                 continue;
             }
             
-            // Parse fact: predicate(arg1, arg2, ...).
             if let Some(fact_open) = line.find('(') {
                 if let Some(fact_close) = line.rfind(')') {
                     let fact_pred = line[..fact_open].trim();
                     let fact_args_str = line[fact_open + 1..fact_close].trim();
                     
-                    // Check if predicates match
                     if fact_pred == predicate {
                         let fact_args: Vec<&str> = if fact_args_str.is_empty() {
                             vec![]
@@ -492,7 +481,6 @@ impl PrologApp {
                             fact_args_str.split(',').map(|s| s.trim()).collect()
                         };
                         
-                        // Try to match arguments
                         if query_args.len() == fact_args.len() {
                             if let Some(binding) = self.try_match_args(&query_args, &fact_args) {
                                 let binding_key = format!("{:?}", binding);
@@ -524,10 +512,8 @@ impl PrologApp {
         
         for (q_arg, f_arg) in query_args.iter().zip(fact_args.iter()) {
             if q_arg.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                // This is a variable in the query
                 bindings.push((q_arg.to_string(), f_arg.to_string()));
             } else {
-                // This is a constant, must match exactly
                 if q_arg != f_arg {
                     return None;
                 }
