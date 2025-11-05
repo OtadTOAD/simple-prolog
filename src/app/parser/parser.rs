@@ -27,6 +27,7 @@ use super::{
         apply_template, find_all_pattern_matches, parse_pattern, try_match_pattern,
         try_match_pattern_substring,
     },
+    pronoun_resolver::PronounResolver,
 };
 
 // Method for parsing input text chunk into sentences.
@@ -415,6 +416,30 @@ pub fn parse_input(app: &mut PrologApp, input: &String) -> String {
     app.interactive_parser.clear();
     let sentences = parse_sentences(input);
 
-    let parsed_sentences: Vec<String> = sentences.iter().map(|s| parse_prolog(app, s)).collect();
+    // Initialize pronoun resolver for this document
+    let mut pronoun_resolver = PronounResolver::new();
+
+    let mut parsed_sentences = Vec::new();
+    for sentence in &sentences {
+        // Resolve pronouns in the sentence
+        let words: Vec<String> = sentence
+            .trim_end_matches('.')
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+
+        let resolved_words = pronoun_resolver.resolve_sentence(&words, &app.database);
+
+        // Reconstruct sentence with resolved pronouns
+        let resolved_sentence = resolved_words.join(" ") + ".";
+
+        // Parse the resolved sentence
+        let parsed = parse_prolog(app, &resolved_sentence);
+        parsed_sentences.push(parsed);
+
+        // Move to next sentence for pronoun tracking
+        pronoun_resolver.next_sentence();
+    }
+
     parsed_sentences.join("\n\n")
 }

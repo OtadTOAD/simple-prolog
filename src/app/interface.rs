@@ -229,7 +229,7 @@ impl PrologApp {
                     egui::vec2(panel_width, available_height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        ui.heading("Interactive Parsing");
+                        ui.heading("Parsing");
                         ui.separator();
 
                         let text_height = ui.available_height() - BOTTOM_GAP;
@@ -419,7 +419,6 @@ impl PrologApp {
             self.parsed_output = "// Parsed Prolog code will appear here...".to_string();
             self.interactive_parser.clear();
             
-            // Reset query engine but reload config
             let mut new_engine = QueryEngine::new();
             if let Err(e) = new_engine.load_config_file("query_config.txt") {
                 eprintln!("Note: Could not load query_config.txt: {}", e);
@@ -430,7 +429,6 @@ impl PrologApp {
             let parse_result = parser::parse_input(self, &input);
             self.parsed_output = parse_result;
             
-            // Load facts into query engine (preserves existing rules/patterns)
             self.query_engine.load_facts_from_output(&self.parsed_output);
         }
     }
@@ -441,10 +439,8 @@ impl PrologApp {
             return;
         }
         
-        // Create a fresh query engine with facts from parsed output
         let mut query_engine = QueryEngine::new();
         
-        // Load facts from parsed output if available
         let has_fact_lines = self
             .parsed_output
             .lines()
@@ -457,21 +453,17 @@ impl PrologApp {
             query_engine.load_facts_from_output(&self.parsed_output);
         }
         
-        // Parse the query text: can contain facts, rules, patterns, and queries
         let mut results = Vec::new();
         let mut errors = Vec::new();
         
         for line in self.query_text.lines() {
             let line = line.trim();
             
-            // Skip empty lines and comments
             if line.is_empty() || line.starts_with("//") || line.starts_with("#") {
                 continue;
             }
             
-            // Check what type of statement this is
             if line.contains(":-") {
-                // It's a rule definition
                 match query_engine.add_rule(line) {
                     Ok(_) => {
                         results.push(format!("// Rule added: {}", line));
@@ -481,7 +473,6 @@ impl PrologApp {
                     }
                 }
             } else if line.contains("-->") {
-                // It's a pattern definition
                 match query_engine.add_pattern(line) {
                     Ok(_) => {
                         results.push(format!("// Pattern added: {}", line));
@@ -491,8 +482,6 @@ impl PrologApp {
                     }
                 }
             } else if line.ends_with('.') && !line.contains('?') {
-                // It's a fact definition (ends with period, not a query)
-                // Try to parse and add as a fact
                 if let Some(fact) = query_engine.parse_fact_public(line) {
                     query_engine.add_fact(fact);
                     results.push(format!("// Fact added: {}", line));
@@ -500,7 +489,6 @@ impl PrologApp {
                     errors.push(format!("// Error parsing fact: {}", line));
                 }
             } else {
-                // It's a query - execute it
                 match query_engine.query(line) {
                     Ok(query_results) => {
                         if query_results.is_empty() {
@@ -518,7 +506,6 @@ impl PrologApp {
             }
         }
         
-        // Combine errors and results
         let mut output = Vec::new();
         let has_errors = !errors.is_empty();
         if has_errors {

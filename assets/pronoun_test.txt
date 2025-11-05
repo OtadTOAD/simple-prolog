@@ -1,0 +1,18 @@
+Plato is a philosopher.
+He wrote books.
+He taught students.
+
+Socrates is wise.
+He is a teacher.
+
+Books are objects.
+They have pages.
+
+Alice met Bob.
+She gave him a gift.
+
+The bear is big.
+It lives in the forest.
+
+Students attend classes.
+They study hard.
