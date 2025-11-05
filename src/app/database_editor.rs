@@ -47,6 +47,8 @@ pub struct DatabaseEditor {
     is_saving: bool,
     is_adding_word: bool,
     is_adding_pattern: bool,
+
+    words_height_ratio: f32,
 }
 
 impl Default for WordType {
@@ -87,6 +89,7 @@ impl DatabaseEditor {
             is_saving: false,
             is_adding_word: false,
             is_adding_pattern: false,
+            words_height_ratio: 0.5,
         }
     }
 
@@ -95,98 +98,130 @@ impl DatabaseEditor {
             ui.heading("Database Editor");
             ui.separator();
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.group(|ui| {
-                    ui.heading("Words");
-                    ui.separator();
+            let available_height = ui.available_height() - 120.0;
 
-                    self.show_word_list(ui, database);
+            let words_height = available_height * self.words_height_ratio;
 
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.label("Add New Word:");
+            ui.group(|ui| {
+                ui.set_height(words_height);
 
-                    self.show_word_form(ui, database);
-                });
-
-                ui.add_space(20.0);
-
-                ui.group(|ui| {
-                    ui.heading("Sentence Patterns");
-                    ui.separator();
-
-                    self.show_pattern_list(ui, database);
-
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.label("Add New Pattern:");
-
-                    self.show_pattern_form(ui, database);
-                });
-
-                ui.add_space(20.0);
-
-                if !self.status_message.is_empty() {
-                    ui.colored_label(egui::Color32::from_rgb(0, 180, 0), &self.status_message);
-                }
-
+                ui.heading("Words");
                 ui.separator();
 
-                if let Some(receiver) = &self.operation_receiver {
-                    if let Ok(result) = receiver.try_recv() {
-                        match result {
-                            OperationResult::SaveComplete(Ok(())) => {
-                                self.status_message =
-                                    "✅ Database saved (JSON + Binary)!".to_string();
-                                self.is_saving = false;
-                            }
-                            OperationResult::SaveComplete(Err(e)) => {
-                                self.status_message = format!("❌ Error saving: {}", e);
-                                self.is_saving = false;
-                            }
+                self.show_word_list(ui, database);
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.label("Add New Word:");
+
+                self.show_word_form(ui, database);
+            });
+
+            ui.add_space(5.0);
+            let splitter_response = ui.allocate_response(
+                egui::vec2(ui.available_width(), 10.0),
+                egui::Sense::click_and_drag(),
+            );
+
+            if splitter_response.dragged() {
+                let delta = splitter_response.drag_delta().y;
+                self.words_height_ratio += delta / available_height;
+                self.words_height_ratio = self.words_height_ratio.clamp(0.2, 0.8);
+            }
+
+            let splitter_rect = splitter_response.rect;
+            let stroke = if splitter_response.hovered() || splitter_response.dragged() {
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 200))
+            } else {
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60))
+            };
+            ui.painter()
+                .hline(splitter_rect.x_range(), splitter_rect.center().y, stroke);
+
+            if splitter_response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+            }
+
+            ui.add_space(5.0);
+
+            let patterns_height = available_height * (1.0 - self.words_height_ratio);
+
+            ui.group(|ui| {
+                ui.set_height(patterns_height);
+
+                ui.heading("Sentence Patterns");
+                ui.separator();
+
+                self.show_pattern_list(ui, database);
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.label("Add New Pattern:");
+
+                self.show_pattern_form(ui, database);
+            });
+
+            ui.add_space(20.0);
+
+            if !self.status_message.is_empty() {
+                ui.colored_label(egui::Color32::from_rgb(0, 180, 0), &self.status_message);
+            }
+
+            ui.separator();
+
+            if let Some(receiver) = &self.operation_receiver {
+                if let Ok(result) = receiver.try_recv() {
+                    match result {
+                        OperationResult::SaveComplete(Ok(())) => {
+                            self.status_message = "✅ Database saved (JSON + Binary)!".to_string();
+                            self.is_saving = false;
                         }
-                        ctx.request_repaint();
+                        OperationResult::SaveComplete(Err(e)) => {
+                            self.status_message = format!("❌ Error saving: {}", e);
+                            self.is_saving = false;
+                        }
                     }
+                    ctx.request_repaint();
+                }
+            }
+
+            ui.horizontal(|ui| {
+                let save_button =
+                    ui.add_enabled(!self.is_saving, egui::Button::new("💾 Save Database"));
+
+                if self.is_saving {
+                    ui.spinner();
+                    ui.label("Saving...");
+                    ctx.request_repaint();
                 }
 
-                ui.horizontal(|ui| {
-                    let save_button =
-                        ui.add_enabled(!self.is_saving, egui::Button::new("💾 Save Database"));
+                if save_button.clicked() {
+                    self.is_saving = true;
+                    self.status_message.clear();
 
-                    if self.is_saving {
-                        ui.spinner();
-                        ui.label("Saving...");
-                        ctx.request_repaint();
-                    }
+                    let sender = self.operation_sender.clone().unwrap();
 
-                    if save_button.clicked() {
-                        self.is_saving = true;
-                        self.status_message.clear();
+                    let db = Arc::clone(database);
+                    std::thread::spawn(move || {
+                        if let Ok(db_guard) = db.read() {
+                            let json_result = db_guard.save(DATABASE_JSON_PATH);
+                            let bin_result = db_guard.save(DATABASE_BIN_PATH);
 
-                        let sender = self.operation_sender.clone().unwrap();
+                            let result = match (json_result, bin_result) {
+                                (Ok(_), Ok(_)) => Ok(()),
+                                (Err(e), _) | (_, Err(e)) => Err(e.to_string()),
+                            };
 
-                        let db = Arc::clone(database);
-                        std::thread::spawn(move || {
-                            if let Ok(db_guard) = db.read() {
-                                let json_result = db_guard.save(DATABASE_JSON_PATH);
-                                let bin_result = db_guard.save(DATABASE_BIN_PATH);
+                            let _ = sender.send(OperationResult::SaveComplete(result));
+                        } else {
+                            let _ = sender.send(OperationResult::SaveComplete(Err(
+                                "Failed to lock database".to_string(),
+                            )));
+                        }
+                    });
 
-                                let result = match (json_result, bin_result) {
-                                    (Ok(_), Ok(_)) => Ok(()),
-                                    (Err(e), _) | (_, Err(e)) => Err(e.to_string()),
-                                };
-
-                                let _ = sender.send(OperationResult::SaveComplete(result));
-                            } else {
-                                let _ = sender.send(OperationResult::SaveComplete(Err(
-                                    "Failed to lock database".to_string(),
-                                )));
-                            }
-                        });
-
-                        ctx.request_repaint();
-                    }
-                });
+                    ctx.request_repaint();
+                }
             });
         });
     }
@@ -221,19 +256,42 @@ impl DatabaseEditor {
                 if search_lower.is_empty() {
                     self.cached_results = (0..read_database.words.len()).collect();
                 } else {
-                    self.cached_results = read_database
+                    let mut matches: Vec<(usize, u8)> = read_database
                         .words
                         .iter()
                         .enumerate()
-                        .filter(|(_, entry)| {
-                            entry.lemma.to_lowercase().contains(&search_lower)
-                                || entry
-                                    .forms
-                                    .iter()
-                                    .any(|f| f.to_lowercase().contains(&search_lower))
+                        .filter_map(|(idx, entry)| {
+                            let lemma_lower = entry.lemma.to_lowercase();
+
+                            // Priority: 0 = exact match, 1 = starts with, 2 = contains
+                            let priority = if lemma_lower == search_lower {
+                                Some(0) // Exact match
+                            } else if lemma_lower.starts_with(&search_lower) {
+                                Some(1) // Prefix match
+                            } else if lemma_lower.contains(&search_lower) {
+                                Some(2) // Contains in lemma
+                            } else if entry.forms.iter().any(|f| {
+                                let f_lower = f.to_lowercase();
+                                f_lower == search_lower || f_lower.starts_with(&search_lower)
+                            }) {
+                                Some(3) // Exact or prefix match in forms
+                            } else if entry
+                                .forms
+                                .iter()
+                                .any(|f| f.to_lowercase().contains(&search_lower))
+                            {
+                                Some(4) // Contains in forms
+                            } else {
+                                None
+                            };
+
+                            priority.map(|p| (idx, p))
                         })
-                        .map(|(idx, _)| idx)
                         .collect();
+
+                    matches.sort_by_key(|(_, priority)| *priority);
+
+                    self.cached_results = matches.into_iter().map(|(idx, _)| idx).collect();
                 }
                 &self.cached_results
             } else {
@@ -281,7 +339,7 @@ impl DatabaseEditor {
 
             egui::ScrollArea::vertical()
                 .id_source("word_list_scroll")
-                .max_height(300.0)
+                .max_height(ui.available_height() - 150.0)
                 .show(ui, |ui| {
                     use egui::*;
 
@@ -416,7 +474,6 @@ impl DatabaseEditor {
                 self.is_adding_word = true;
                 self.status_message.clear();
 
-                // Prepare data for background thread
                 let forms: Vec<String> = self
                     .new_word_forms
                     .split(',')
@@ -431,7 +488,6 @@ impl DatabaseEditor {
                     forms,
                 };
 
-                // Add to database immediately (adding words is fast)
                 if let Ok(mut write_database) = database.write() {
                     write_database.words.push(entry);
                     write_database.rebuild_index();
@@ -452,7 +508,6 @@ impl DatabaseEditor {
             return;
         };
 
-        // Search bar
         ui.horizontal(|ui| {
             ui.label(format!("Total patterns: {}", read_database.patterns.len()));
             ui.separator();
@@ -475,7 +530,6 @@ impl DatabaseEditor {
 
         let search_lower = self.pattern_search.to_lowercase();
 
-        // Filter patterns
         let filtered_indices: &[usize] = if search_lower != self.cached_pattern_search {
             self.cached_pattern_search = search_lower.clone();
 
@@ -510,7 +564,6 @@ impl DatabaseEditor {
         let end = (start + self.patterns_per_page).min(total_filtered);
         let page_indices = &filtered_indices[start..end];
 
-        // Pagination controls
         ui.horizontal(|ui| {
             if total_filtered > self.patterns_per_page {
                 ui.label(format!("{}-{} of {}", start + 1, end, total_filtered));
@@ -545,7 +598,7 @@ impl DatabaseEditor {
 
         egui::ScrollArea::vertical()
             .id_source("pattern_list_scroll")
-            .max_height(300.0)
+            .max_height(ui.available_height() - 200.0)
             .show(ui, |ui| {
                 for (display_idx, &idx) in page_indices.iter().enumerate() {
                     if let Some(pattern) = read_database.patterns.get(idx) {
@@ -562,7 +615,6 @@ impl DatabaseEditor {
                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                             .show(ui, |ui| {
                                 if is_editing {
-                                    // Edit mode
                                     ui.horizontal(|ui| {
                                         ui.label("Name:");
                                         ui.add(
@@ -624,7 +676,6 @@ impl DatabaseEditor {
                                         );
                                     });
                                 } else {
-                                    // View mode
                                     ui.horizontal(|ui| {
                                         let status = if pattern.enabled { "Y" } else { "N" };
                                         let status_color = if pattern.enabled {
@@ -717,10 +768,8 @@ impl DatabaseEditor {
                 }
             });
 
-        // Drop the read guard before acquiring write guard
         drop(read_database);
 
-        // Handle edit operations
         if cancel_edit {
             self.edit_pattern_index = None;
             self.edit_pattern_name.clear();
@@ -754,7 +803,6 @@ impl DatabaseEditor {
             self.edit_pattern_priority.clear();
         }
 
-        // Handle toggle and remove operations
         if !to_toggle.is_empty() || !to_remove.is_empty() {
             if let Ok(mut write_database) = database.write() {
                 for idx in to_toggle {
@@ -828,7 +876,6 @@ impl DatabaseEditor {
                 self.is_adding_pattern = true;
                 self.status_message.clear();
 
-                // Add pattern immediately (adding patterns is fast)
                 let priority: i32 = self.new_pattern_priority.parse().unwrap_or(50);
 
                 let pattern = PrologPattern {

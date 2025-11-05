@@ -88,15 +88,20 @@ impl PrologApp {
 
                         let text_height = ui.available_height() - BOTTOM_GAP;
 
-                        let response = ui.add_sized(
-                            [ui.available_width(), text_height.max(100.0)],
-                            egui::TextEdit::multiline(&mut self.input_text)
-                                .hint_text("Enter natural language text here...\n\nExample:\nBear is an animal\nCat is a mammal\nMammals are animals")
-                        );
-                        
-                        if response.changed() {
-                            self.update_parsed_output();
-                        }
+                        egui::ScrollArea::vertical()
+                            .id_source("input_text_scroll")
+                            .max_height(text_height.max(100.0))
+                            .show(ui, |ui| {
+                                let response = ui.add_sized(
+                                    [ui.available_width(), text_height.max(100.0)],
+                                    egui::TextEdit::multiline(&mut self.input_text)
+                                        .hint_text("Enter natural language text here...\n\nExample:\nBear is an animal\nCat is a mammal\nMammals are animals")
+                                );
+                                
+                                if response.changed() {
+                                    self.update_parsed_output();
+                                }
+                            });
                         
                         ui.separator();
                         
@@ -118,13 +123,16 @@ impl PrologApp {
 
                         let text_height = ui.available_height() - BOTTOM_GAP;
 
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_sized(
-                                [ui.available_width(), text_height.max(100.0)],
-                                egui::TextEdit::multiline(&mut self.parsed_output)
-                                    .interactive(false)
-                            );
-                        });
+                        egui::ScrollArea::vertical()
+                            .id_source("output_text_scroll")
+                            .max_height(text_height.max(100.0))
+                            .show(ui, |ui| {
+                                ui.add_sized(
+                                    [ui.available_width(), text_height.max(100.0)],
+                                    egui::TextEdit::multiline(&mut self.parsed_output)
+                                        .interactive(false)
+                                );
+                            });
                         
                         ui.separator();
 
