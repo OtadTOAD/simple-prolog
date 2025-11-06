@@ -197,6 +197,8 @@ impl PrologApp {
                                                         }
                                                     }
                                                     self.interactive_parser.dragging_highlight = None;
+                                                    
+                                                    self.rebuild_parsed_output_from_interactive();
                                                 }
                                             }
                                         });
@@ -431,6 +433,23 @@ impl PrologApp {
             
             self.query_engine.load_facts_from_output(&self.parsed_output);
         }
+    }
+    
+    fn rebuild_parsed_output_from_interactive(&mut self) {
+        if self.interactive_parser.matches.is_empty() {
+            return;
+        }
+        
+        let mut output_lines = Vec::new();
+        
+        for sentence_match in &self.interactive_parser.matches {
+            output_lines.push(format!("// PATTERN: {}", sentence_match.pattern_name));
+            output_lines.push(sentence_match.generated_output.clone());
+        }
+        
+        self.parsed_output = output_lines.join("\n");
+        
+        self.query_engine.load_facts_from_output(&self.parsed_output);
     }
     
     fn execute_query(&mut self) {
