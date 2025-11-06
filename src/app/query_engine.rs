@@ -412,18 +412,32 @@ impl QueryEngine {
         let mut bindings = HashMap::new();
 
         for (q_arg, f_arg) in query_args.iter().zip(fact_args.iter()) {
-            if q_arg
+            let q_is_var = q_arg
                 .chars()
                 .next()
                 .map(|c| c.is_uppercase())
-                .unwrap_or(false)
-            {
+                .unwrap_or(false);
+            let f_is_var = f_arg
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false);
+
+            if q_is_var {
                 if let Some(existing) = bindings.get(q_arg) {
                     if existing != f_arg {
                         return None;
                     }
                 } else {
                     bindings.insert(q_arg.clone(), f_arg.clone());
+                }
+            } else if f_is_var {
+                if let Some(existing) = bindings.get(f_arg) {
+                    if existing != q_arg {
+                        return None;
+                    }
+                } else {
+                    bindings.insert(f_arg.clone(), q_arg.clone());
                 }
             } else {
                 if q_arg != f_arg {
@@ -437,6 +451,17 @@ impl QueryEngine {
 
     fn evaluate_rule(&self, rule: &Rule, query_args: &[String]) -> Option<Vec<String>> {
         let head_bindings = self.unify(query_args, &rule.head.args)?;
+
+        let query_variables: Vec<String> = query_args
+            .iter()
+            .filter(|arg| {
+                arg.chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
 
         let mut all_bindings = vec![head_bindings];
 
@@ -504,7 +529,14 @@ impl QueryEngine {
             Some(
                 all_bindings
                     .into_iter()
-                    .map(|b| self.format_bindings(&b))
+                    .map(|b| {
+                        // Only keep bindings for variables that were in the query
+                        let filtered: HashMap<String, String> = b
+                            .into_iter()
+                            .filter(|(var, _)| query_variables.contains(var))
+                            .collect();
+                        self.format_bindings(&filtered)
+                    })
                     .collect(),
             )
         }
